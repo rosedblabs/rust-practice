@@ -7,6 +7,7 @@ use std::{
 };
 
 const KEY_VAL_HEADER_LEN: u32 = 4;
+const MERGE_FILE_EXT: &str = "merge";
 
 type KeyDir = std::collections::BTreeMap<Vec<u8>, (u64, u32)>;
 
@@ -32,8 +33,33 @@ impl MiniBitcask {
         Ok(Self { log, keydir })
     }
 
-    pub fn merge() -> Result<()> {
-        todo!()
+    pub fn merge(&mut self) -> Result<()> {
+        // 创建一个新的临时用于用于写入
+        let mut merge_path = self.log.path.clone();
+        merge_path.set_extension(MERGE_FILE_EXT);
+
+        let mut new_log = Log::new(merge_path)?;
+        let mut new_keydir = KeyDir::new();
+
+        // 重写数据
+        for (key, (value_pos, value_len)) in self.keydir.iter() {
+            let value = self.log.read_value(*value_pos, *value_len)?;
+            let (offset, len) = new_log.write_entry(key, Some(&value))?;
+            new_keydir.insert(
+                key.clone(),
+                (offset + len as u64 - *value_len as u64, *value_len),
+            );
+        }
+
+        // 重写完成，重命名文件
+        std::fs::rename(new_log.path, self.log.path.clone())?;
+
+        new_log.path = self.log.path.clone();
+        // 替换现在的
+        self.log = new_log;
+        self.keydir = new_keydir;
+
+        Ok(())
     }
 
     //   0-----3------7   8--------------21 22---------------38
@@ -126,7 +152,7 @@ impl<'a> DoubleEndedIterator for ScanIterator<'a> {
 }
 
 struct Log {
-    // path: PathBuf,
+    path: PathBuf,
     file: std::fs::File,
 }
 
@@ -145,7 +171,7 @@ impl Log {
         // 加 exclusive lock 防止并发更新
         file.try_lock_exclusive()?;
 
-        Ok(Self { file })
+        Ok(Self { path, file })
     }
 
     // 构建内存索引
@@ -383,6 +409,40 @@ mod tests {
         assert_eq!(key2, b"canehe".to_vec());
 
         println!("{:?}", path.clone());
+        path.parent().map(|p| std::fs::remove_dir_all(p));
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge() -> Result<()> {
+        let path = std::env::temp_dir()
+            .join("minibitcask-merge-test")
+            .join("log");
+
+        let mut eng = MiniBitcask::new(path.clone())?;
+
+        eng.set(b"a", b"value1".to_vec())?;
+        eng.set(b"b", b"value2".to_vec())?;
+        eng.set(b"c", b"value3".to_vec())?;
+        eng.delete(b"a")?;
+        eng.delete(b"b")?;
+        eng.delete(b"c")?;
+
+        eng.merge()?;
+
+        eng.set(b"a", b"value1".to_vec())?;
+        eng.set(b"b", b"value2".to_vec())?;
+        eng.set(b"c", b"value3".to_vec())?;
+
+        let val = eng.get(b"a")?;
+        assert_eq!(b"value1".to_vec(), val.unwrap());
+
+        let val = eng.get(b"b")?;
+        assert_eq!(b"value2".to_vec(), val.unwrap());
+
+        let val = eng.get(b"c")?;
+        assert_eq!(b"value3".to_vec(), val.unwrap());
+
         path.parent().map(|p| std::fs::remove_dir_all(p));
         Ok(())
     }
