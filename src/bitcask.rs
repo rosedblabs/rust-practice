@@ -1,4 +1,3 @@
-use crate::error::Result;
 use fs4::FileExt;
 use std::{
     collections::btree_map,
@@ -11,17 +10,11 @@ const KEY_VAL_HEADER_LEN: u32 = 4;
 
 type KeyDir = std::collections::BTreeMap<Vec<u8>, (u64, u32)>;
 
+pub type Result<T> = std::result::Result<T, std::io::Error>;
+
 pub struct MiniBitcask {
     log: Log,
     keydir: KeyDir,
-}
-
-impl MiniBitcask {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let mut log = Log::new(path)?;
-        let keydir = log.build_keydir()?;
-        Ok(Self { log, keydir })
-    }
 }
 
 impl Drop for MiniBitcask {
@@ -33,6 +26,16 @@ impl Drop for MiniBitcask {
 }
 
 impl MiniBitcask {
+    pub fn new(path: PathBuf) -> Result<Self> {
+        let mut log = Log::new(path)?;
+        let keydir = log.load_index()?;
+        Ok(Self { log, keydir })
+    }
+
+    pub fn merge() -> Result<()> {
+        todo!()
+    }
+
     //   0-----3------7   8--------------21 22---------------38
     //        4 + 4     +      14 + 17
     // offset 0
@@ -146,7 +149,7 @@ impl Log {
     }
 
     // 构建内存索引
-    fn build_keydir(&mut self) -> Result<KeyDir> {
+    fn load_index(&mut self) -> Result<KeyDir> {
         let mut len_buf = [0u8; KEY_VAL_HEADER_LEN as usize];
         let mut keydir = KeyDir::new();
         let file_len = self.file.metadata()?.len();
@@ -231,10 +234,8 @@ impl Log {
 
 #[cfg(test)]
 mod tests {
+    use super::{Log, MiniBitcask, Result};
     use std::ops::Bound;
-
-    use super::{Log, MiniBitcask};
-    use crate::error::Result;
 
     #[test]
     fn test_log_read_write() -> Result<()> {
@@ -252,7 +253,7 @@ mod tests {
         // delete
         log.write_entry(b"c", None)?;
 
-        let keydir = log.build_keydir()?;
+        let keydir = log.load_index()?;
         assert_eq!(2, keydir.len());
 
         path.parent().map(|p| std::fs::remove_dir_all(p));
@@ -276,7 +277,7 @@ mod tests {
         drop(log);
 
         let mut log = Log::new(path.clone())?;
-        let keydir = log.build_keydir()?;
+        let keydir = log.load_index()?;
         assert_eq!(3, keydir.len());
 
         path.parent().map(|p| std::fs::remove_dir_all(p));
