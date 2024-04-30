@@ -158,7 +158,9 @@ impl<'a> Iterator for Tokenizer<'a> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // 消除前面的空格
         self.consume_whitespace();
+        // 解析当前位置的 Token 类型
         match self.tokens.peek() {
             Some(c) if c.is_numeric() => self.scan_number(),
             Some(_) => self.scan_operator(),
@@ -187,8 +189,8 @@ impl<'a> Expr<'a> {
         }
         Ok(result)
     }
-    
-    // 计算单个 Token
+
+    // 计算单个 Token或者子表达式
     fn compute_atom(&mut self) -> Result<i32> {
         match self.iter.peek() {
             // 如果是数字的话，直接返回
@@ -218,7 +220,7 @@ impl<'a> Expr<'a> {
     fn compute_expr(&mut self, min_prec: i32) -> Result<i32> {
         // 计算第一个 Token
         let mut atom_lhs = self.compute_atom()?;
-        
+
         loop {
             let cur_token = self.iter.peek();
             if cur_token.is_none() {
@@ -241,7 +243,7 @@ impl<'a> Expr<'a> {
 
             // 递归计算右边的表达式
             let atom_rhs = self.compute_expr(next_prec)?;
-            
+
             // 得到了两边的值，进行计算
             match token.compute(atom_lhs, atom_rhs) {
                 Some(res) => atom_lhs = res,
