@@ -1,14 +1,21 @@
-use std::{collections::{BTreeMap, HashSet, HashMap}, sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}};
 use lazy_static::lazy_static;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+};
 
 // 存储引擎定义，这里使用一个简单的内存 BTreeMap
-pub type KVEngine = BTreeMap<Vec<u8>, Vec<u8>>;
+pub type KVEngine = BTreeMap<Vec<u8>, Option<Vec<u8>>>;
 
 // 全局递增的版本号
 static VERSION: AtomicU64 = AtomicU64::new(1);
 
-fn acquire_txn_version() -> u64 {
+// 获取下一个版本号
+fn acquire_next_version() -> u64 {
     let version = VERSION.fetch_add(1, Ordering::SeqCst);
     version
 }
@@ -18,7 +25,9 @@ lazy_static! {
     static ref ACTIVE_TXN: Arc<Mutex<HashMap<u64, Vec<Vec<u8>>>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
+// MVCC 事务定义
 pub struct MVCC {
+    // KV 存储引擎
     kv: Arc<Mutex<KVEngine>>,
 }
 
@@ -29,14 +38,14 @@ impl MVCC {
         }
     }
 
-    pub fn new_tx(&self) -> Transaction {
+    pub fn begin_transaction(&self) -> Transaction {
         Transaction::begin(self.kv.clone())
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Key {
-    row_key: Vec<u8>,
+    raw_key: Vec<u8>,
     version: u64,
 }
 
@@ -62,27 +71,40 @@ pub struct Transaction {
 
 impl Transaction {
     // 开启事务
-    pub fn begin(kv: Arc<Mutex<KVEngine>>) ->Self {
+    pub fn begin(kv: Arc<Mutex<KVEngine>>) -> Self {
         // 获取全局事务号
-        let version = acquire_txn_version();
-        
+        let version = acquire_next_version();
+
         let mut active_txn = ACTIVE_TXN.lock().unwrap();
         let active_xid = active_txn.keys().cloned().collect();
-        
+
         // 添加到当前活跃事务 id 列表中
         active_txn.insert(version, vec![]);
 
         // 返回结果
-        Self { kv, version, active_xid}
+        Self {
+            kv,
+            version,
+            active_xid,
+        }
     }
 
     // 写入数据
     pub fn set(&self, key: &[u8], value: Vec<u8>) {
+        self.write(key, Some(value))
+    }
+
+    // 删除数据
+    pub fn delete(&self, key: &[u8]) {
+        self.write(key, None)
+    }
+
+    fn write(&self, key: &[u8], value: Option<Vec<u8>>) {
         // 判断当前写入的 key 是否和其他的事务冲突
         let mut kvengine = self.kv.lock().unwrap();
         for (enc_key, _) in kvengine.iter().rev() {
             let key_version = decode_key(enc_key);
-            if key_version.row_key.eq(key) {
+            if key_version.raw_key.eq(key) {
                 if !self.is_visible(key_version.version) {
                     panic!("serialization error");
                 }
@@ -92,12 +114,16 @@ impl Transaction {
 
         // 写入 TxnWrite
         let mut active_txn = ACTIVE_TXN.lock().unwrap();
-        active_txn.entry(self.version)
-            .and_modify(|keys|keys.push(key.to_vec()))
+        active_txn
+            .entry(self.version)
+            .and_modify(|keys| keys.push(key.to_vec()))
             .or_insert_with(|| vec![key.to_vec()]);
 
         // 写入数据
-        let enc_key = Key { row_key: key.to_vec(), version: self.version };
+        let enc_key = Key {
+            raw_key: key.to_vec(),
+            version: self.version,
+        };
         kvengine.insert(enc_key.encode(), value);
     }
 
@@ -105,20 +131,23 @@ impl Transaction {
         let kvengine = self.kv.lock().unwrap();
         for (k, v) in kvengine.iter().rev() {
             let key_version = decode_key(k);
-            if key_version.row_key.eq(key) && self.is_visible(key_version.version) {
-                return Some(v.to_vec());
+            if key_version.raw_key.eq(key) && self.is_visible(key_version.version) {
+                return v.clone();
             }
         }
         None
     }
 
-    pub fn print_all(&self) {
+    fn print_all(&self) {
         let kvengine = self.kv.lock().unwrap();
         for (k, v) in kvengine.iter().rev() {
             let key_version = decode_key(k);
             if self.is_visible(key_version.version) {
-                println!("key = {:?}, value = {:?}", 
-                    String::from_utf8(key_version.row_key.to_vec()), String::from_utf8(v.to_vec()));
+                println!(
+                    "key = {:?}, value = {:?}",
+                    String::from_utf8(key_version.raw_key.to_vec()),
+                    String::from_utf8(v.clone().unwrap().to_vec())
+                );
             }
         }
     }
@@ -137,29 +166,34 @@ impl Transaction {
         if let Some(keys) = active_txn.get(&self.version) {
             let mut kvengine = self.kv.lock().unwrap();
             for k in keys {
-                let enc_key = Key {row_key: k.to_vec(), version: self.version};
+                let enc_key = Key {
+                    raw_key: k.to_vec(),
+                    version: self.version,
+                };
                 let res = kvengine.remove(&enc_key.encode());
                 assert!(res.is_some());
             }
         }
 
-        // 清除 TxnWrite 的数据
+        // 清除活跃事务列表中的数据
         active_txn.remove(&self.version);
     }
 
+    // 判断一个版本的数据对当前事务是否可见
+    // 1. 如果是另一个活跃事务的修改，则不可见
+    // 2. 如果版本号比当前大，则不可见
     fn is_visible(&self, version: u64) -> bool {
         if self.active_xid.contains(&version) {
             return false;
         }
         version <= self.version
     }
-
 }
 
 fn main() {
     let eng = KVEngine::new();
     let mvcc = MVCC::new(eng);
-    let tx1 = mvcc.new_tx();
+    let tx1 = mvcc.begin_transaction();
 
     tx1.set(b"a", b"val1".to_vec());
     tx1.set(b"a", b"val11".to_vec());
@@ -170,9 +204,10 @@ fn main() {
     // tx1.commit();
     // tx1.rollback();
 
-    let tx2 = mvcc.new_tx();
+    let tx2 = mvcc.begin_transaction();
     tx2.print_all();
-    tx2.set(b"dd", b"val22".to_vec());
+    tx2.set(b"d", b"val22".to_vec());
+    tx2.set(b"d", b"val23".to_vec());
 
     tx1.commit();
     tx2.print_all();
