@@ -1,17 +1,18 @@
-# 表达式解析计算
+# expr-eval
 
-根据运算符优先级来进行表达式计算，算法看起来非常简洁优雅，非常巧妙的利用优先级来解决运算的顺序和结合等问题。
+An arithmetic expression parser and evaluator based on **operator-precedence parsing** — an elegant, compact algorithm that uses operator precedence and associativity to resolve order of operations (including parentheses) without building a separate AST.
 
-完整的代码也只有 200 多行，比较适合用来练手，通过这个项目，可以学习到：
+The whole implementation is ~200 lines, which makes it a nice hands-on exercise. Through this project you can learn:
 
-* 一个优雅、简洁的表达式计算的算法
-* 解决类似写一个计算器的面试问题
-* Rust 基础数据类型、枚举、结构体基本用法
-* 函数、递归
-* match 表达式
-* 自定义 Result 错误处理
-* 迭代器的常见用法 next、peekable 等
-* 自定义迭代器
-* Option 使用
+* An elegant, compact expression-evaluation algorithm (handy for "write a calculator" interview questions)
+* Rust's basic data types, enums, and structs
+* Functions and recursion
+* `match` expressions
+* Custom `Result`-based error handling
+* Common iterator usage: `next`, `peekable`, etc.
+* Writing a custom iterator
+* `Option` usage
 
-详细介绍文章：[太优雅了！Rust 200 行代码实现表达式解析](https://mp.weixin.qq.com/s/MuuaROoH7gI0wYVypEOoWw)
+**How it works, in short:** a `Tokenizer` turns the source string into a stream of `Token`s (numbers, operators, parentheses) and implements `Iterator`, so it can be consumed with a `for` loop or wrapped in `Peekable`. `Expr::compute_expr` then evaluates left to right, recursing into a sub-expression only when the next operator's precedence is at least the current minimum (`min_prec`); right-associative operators like `^` keep the same `min_prec` on recursion, while left-associative ones bump it by one — that's the whole trick.
+
+Further reading (Chinese): [太优雅了！Rust 200 行代码实现表达式解析](https://mp.weixin.qq.com/s/MuuaROoH7gI0wYVypEOoWw)

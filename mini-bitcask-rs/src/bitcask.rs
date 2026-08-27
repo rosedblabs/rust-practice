@@ -34,14 +34,14 @@ impl MiniBitcask {
     }
 
     pub fn merge(&mut self) -> Result<()> {
-        // 创建一个新的临时用于用于写入
+        // Create a new temporary file to write into
         let mut merge_path = self.log.path.clone();
         merge_path.set_extension(MERGE_FILE_EXT);
 
         let mut new_log = Log::new(merge_path)?;
         let mut new_keydir = KeyDir::new();
 
-        // 重写数据
+        // Rewrite the data
         for (key, (value_pos, value_len)) in self.keydir.iter() {
             let value = self.log.read_value(*value_pos, *value_len)?;
             let (offset, len) = new_log.write_entry(key, Some(&value))?;
@@ -51,11 +51,11 @@ impl MiniBitcask {
             );
         }
 
-        // 重写完成，重命名文件
+        // Rewrite complete, rename the file
         std::fs::rename(new_log.path, self.log.path.clone())?;
 
         new_log.path = self.log.path.clone();
-        // 替换现在的
+        // Replace the current log with the new one
         self.log = new_log;
         self.keydir = new_keydir;
 
@@ -112,7 +112,7 @@ impl MiniBitcask {
     pub fn scan_prefix(&mut self, prefix: &[u8]) -> ScanIterator<'_> {
         let start = Bound::Included(prefix.to_vec());
 
-        // 最后一位加一，例如原始前缀是 "aaaa"，变为 "aaab"
+        // Increment the last byte, e.g. the original prefix "aaaa" becomes "aaab"
         let mut bound_prefix = prefix.to_vec().clone();
         if let Some(last) = bound_prefix.iter_mut().last() {
             *last += 1;
@@ -123,7 +123,7 @@ impl MiniBitcask {
     }
 }
 
-// 迭代器实现
+// Iterator implementation
 pub struct ScanIterator<'a> {
     inner: btree_map::Range<'a, Vec<u8>, (u64, u32)>,
     log: &'a mut Log,
@@ -168,13 +168,13 @@ impl Log {
             .create(true)
             .open(&path)?;
 
-        // 加 exclusive lock 防止并发更新
+        // Add an exclusive lock to prevent concurrent updates
         file.try_lock_exclusive()?;
 
         Ok(Self { path, file })
     }
 
-    // 构建内存索引
+    // Build the in-memory index
     fn load_index(&mut self) -> Result<KeyDir> {
         let mut len_buf = [0u8; KEY_VAL_HEADER_LEN as usize];
         let mut keydir = KeyDir::new();
@@ -184,24 +184,24 @@ impl Log {
 
         while pos < file_len {
             let read_one = || -> Result<(Vec<u8>, u64, Option<u32>)> {
-                // 读取 key 的长度
+                // Read the key length
                 r.read_exact(&mut len_buf)?;
                 let key_len = u32::from_be_bytes(len_buf);
-                // 读取 value 的长度
+                // Read the value length
                 r.read_exact(&mut len_buf)?;
                 let value_lent_or_tombstone = match i32::from_be_bytes(len_buf) {
                     l if l >= 0 => Some(l as u32),
                     _ => None,
                 };
 
-                // value 的位置
+                // The value's position
                 let value_pos = pos + KEY_VAL_HEADER_LEN as u64 * 2 + key_len as u64;
 
-                // 读取 key 的内容
+                // Read the key content
                 let mut key = vec![0; key_len as usize];
                 r.read_exact(&mut key)?;
 
-                // 跳过 value 的长度
+                // Skip over the value
                 if let Some(value_len) = value_lent_or_tombstone {
                     r.seek_relative(value_len as i64)?;
                 }
@@ -225,7 +225,7 @@ impl Log {
         Ok(keydir)
     }
 
-    // 根据 value 的位置和长度获取 value 的值
+    // Get the value based on its position and length
     fn read_value(&mut self, value_pos: u64, value_len: u32) -> Result<Vec<u8>> {
         let mut value = vec![0; value_len as usize];
         self.file.seek(SeekFrom::Start(value_pos))?;
@@ -241,7 +241,7 @@ impl Log {
         let value_len = value.map_or(0, |v| v.len() as u32);
         let value_len_or_tomestone = value.map_or(-1, |v| v.len() as i32);
 
-        // 总共占据的长度
+        // Total length occupied
         let len = KEY_VAL_HEADER_LEN * 2 + key_len + value_len;
 
         let offset = self.file.seek(SeekFrom::End(0))?;
@@ -311,28 +311,28 @@ mod tests {
         Ok(())
     }
 
-    // 测试点读的情况
+    // Test point-read scenarios
     #[test]
     fn test_point_opt() -> Result<()> {
         let path = std::env::temp_dir().join("minibitcask-test").join("log");
         let mut eng = MiniBitcask::new(path.clone())?;
 
-        // 测试获取一个不存在的 key
+        // Test getting a key that doesn't exist
         assert_eq!(eng.get(b"not exist")?, None);
 
-        // 获取一个存在的 key
+        // Get an existing key
         eng.set(b"aa", vec![1, 2, 3, 4])?;
         assert_eq!(eng.get(b"aa")?, Some(vec![1, 2, 3, 4]));
 
-        // 重复 put，将会覆盖前一个值
+        // Repeated put overwrites the previous value
         eng.set(b"aa", vec![5, 6, 7, 8])?;
         assert_eq!(eng.get(b"aa")?, Some(vec![5, 6, 7, 8]));
 
-        // 删除之后再读取
+        // Read again after deleting
         eng.delete(b"aa")?;
         assert_eq!(eng.get(b"aa")?, None);
 
-        // key、value 为空的情况
+        // Empty key/value cases
         assert_eq!(eng.get(b"")?, None);
         eng.set(b"", vec![])?;
         assert_eq!(eng.get(b"")?, Some(vec![]));
@@ -344,7 +344,7 @@ mod tests {
         Ok(())
     }
 
-    // 测试扫描
+    // Test scan
     #[test]
     fn test_scan() -> Result<()> {
         let path = std::env::temp_dir()
@@ -386,7 +386,7 @@ mod tests {
         Ok(())
     }
 
-    // 测试前缀扫描
+    // Test prefix scan
     #[test]
     fn test_scan_prefix() -> Result<()> {
         let path = std::env::temp_dir()

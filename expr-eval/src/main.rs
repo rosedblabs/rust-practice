@@ -1,9 +1,9 @@
 use std::{fmt::Display, iter::Peekable, str::Chars};
 
-// 自定义 Result 类型
+// Custom Result type
 pub type Result<T> = std::result::Result<T, ExprError>;
 
-// 自定义错误类型
+// Custom error type
 #[derive(Debug)]
 pub enum ExprError {
     Parse(String),
@@ -19,22 +19,22 @@ impl Display for ExprError {
     }
 }
 
-// Token 表示，数字、运算符号、括号
+// Token represents a number, operator, or parenthesis
 #[derive(Debug, Clone, Copy)]
 enum Token {
     Number(i32),
-    Plus,       // 加
-    Minus,      // 减
-    Multiply,   // 乘
-    Divide,     // 除
-    Power,      // 幂
-    LeftParen,  // 左括号
-    RightParen, // 右括号
+    Plus,       // plus
+    Minus,      // minus
+    Multiply,   // multiply
+    Divide,     // divide
+    Power,      // power
+    LeftParen,  // left parenthesis
+    RightParen, // right parenthesis
 }
 
-// 左结合
+// left associative
 const ASSOC_LEFT: i32 = 0;
-// 右结合
+// right associative
 const ASSOC_RIGHT: i32 = 1;
 
 impl Display for Token {
@@ -57,7 +57,7 @@ impl Display for Token {
 }
 
 impl Token {
-    // 判断是不是运算符号
+    // Check whether this token is an operator
     fn is_operator(&self) -> bool {
         match self {
             Token::Plus | Token::Minus | Token::Multiply | Token::Divide | Token::Power => true,
@@ -65,7 +65,7 @@ impl Token {
         }
     }
 
-    // 获取运算符的优先级
+    // Get the operator's precedence
     fn precedence(&self) -> i32 {
         match self {
             Token::Plus | Token::Minus => 1,
@@ -75,7 +75,7 @@ impl Token {
         }
     }
 
-    // 获取运算符的结合性
+    // Get the operator's associativity
     fn assoc(&self) -> i32 {
         match self {
             Token::Power => ASSOC_RIGHT,
@@ -83,7 +83,7 @@ impl Token {
         }
     }
 
-    // 根据当前运算符进行计算
+    // Compute the result based on the current operator
     fn compute(&self, l: i32, r: i32) -> Option<i32> {
         match self {
             Token::Plus => Some(l + r),
@@ -96,8 +96,8 @@ impl Token {
     }
 }
 
-// 将一个算术表达式解析成连续的 Token
-// 并通过 Iterator 返回，也可以通过 Peekable 接口获取
+// Parses an arithmetic expression into a sequence of Tokens,
+// returned via Iterator; also accessible through the Peekable interface
 struct Tokenizer<'a> {
     tokens: Peekable<Chars<'a>>,
 }
@@ -109,7 +109,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    // 消除空白字符
+    // Consume whitespace characters
     fn consume_whitespace(&mut self) {
         while let Some(&c) = self.tokens.peek() {
             if c.is_whitespace() {
@@ -120,7 +120,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    // 扫描数字
+    // Scan a number
     fn scan_number(&mut self) -> Option<Token> {
         let mut num = String::new();
         while let Some(&c) = self.tokens.peek() {
@@ -138,7 +138,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    // 扫描运算符号
+    // Scan an operator
     fn scan_operator(&mut self) -> Option<Token> {
         match self.tokens.next() {
             Some('+') => Some(Token::Plus),
@@ -153,14 +153,14 @@ impl<'a> Tokenizer<'a> {
     }
 }
 
-// 实现 Iterator 接口，使 Tokenizer 可以通过 for 循环遍历
+// Implement the Iterator trait so Tokenizer can be traversed with a for loop
 impl<'a> Iterator for Tokenizer<'a> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // 消除前面的空格
+        // Consume leading whitespace
         self.consume_whitespace();
-        // 解析当前位置的 Token 类型
+        // Parse the Token type at the current position
         match self.tokens.peek() {
             Some(c) if c.is_numeric() => self.scan_number(),
             Some(_) => self.scan_operator(),
@@ -180,26 +180,26 @@ impl<'a> Expr<'a> {
         }
     }
 
-    // 计算表达式，获取结果
+    // Evaluate the expression and get the result
     pub fn eval(&mut self) -> Result<i32> {
         let result = self.compute_expr(1)?;
-        // 如果还有 Token 没有处理，说明表达式存在错误
+        // If there are still unprocessed Tokens, the expression has an error
         if self.iter.peek().is_some() {
             return Err(ExprError::Parse("Unexpected end of expr".into()));
         }
         Ok(result)
     }
 
-    // 计算单个 Token或者子表达式
+    // Evaluate a single Token or sub-expression
     fn compute_atom(&mut self) -> Result<i32> {
         match self.iter.peek() {
-            // 如果是数字的话，直接返回
+            // If it's a number, return it directly
             Some(Token::Number(n)) => {
                 let val = *n;
                 self.iter.next();
                 return Ok(val);
             }
-            // 如果是左括号的话，递归计算括号内的值
+            // If it's a left parenthesis, recursively evaluate the value inside
             Some(Token::LeftParen) => {
                 self.iter.next();
                 let result = self.compute_expr(1)?;
@@ -218,7 +218,7 @@ impl<'a> Expr<'a> {
     }
 
     fn compute_expr(&mut self, min_prec: i32) -> Result<i32> {
-        // 计算第一个 Token
+        // Evaluate the first Token
         let mut atom_lhs = self.compute_atom()?;
 
         loop {
@@ -228,8 +228,8 @@ impl<'a> Expr<'a> {
             }
             let token = *cur_token.unwrap();
 
-            // 1. Token 一定是运算符
-            // 2. Token 的优先级必须大于等于 min_prec
+            // 1. The Token must be an operator
+            // 2. The Token's precedence must be >= min_prec
             if !token.is_operator() || token.precedence() < min_prec {
                 break;
             }
@@ -241,10 +241,10 @@ impl<'a> Expr<'a> {
 
             self.iter.next();
 
-            // 递归计算右边的表达式
+            // Recursively evaluate the expression on the right
             let atom_rhs = self.compute_expr(next_prec)?;
 
-            // 得到了两边的值，进行计算
+            // Both sides have values now, perform the computation
             match token.compute(atom_lhs, atom_rhs) {
                 Some(res) => atom_lhs = res,
                 None => return Err(ExprError::Parse("Unexpected expr".into())),
